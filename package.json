@@ -1,0 +1,12 @@
+{
+    "name": "arg-wait",
+    "version": "0.0.1",
+    "description": "Deal with lots of async.",
+    "keywords": ["async", "sync", "wait", "then", "group", "args", "sequence", "arguments", "asynchronous", "error"],
+    "homepage": "http://pangur.com.au/arg-wait",
+    "author": { "name": "Raffecat", "email": "atowers@gmail.com" },
+    "bugs": { "url": "http://github.com/raffecat/arg-wait/issues" },
+    "repository": { "type": "git", "url": "http://github.com/raffecat/arg-wait.git" },
+    "main": "arg-wait",
+    "dependencies": {}
+}
