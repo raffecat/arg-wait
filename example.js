@@ -14,14 +14,14 @@ function walkDir(basedir, fileCB, doneCB) {
                     if (stat.isDirectory()) {
                         walk(rel);
                     } else {
-                        fileCB(rel, stat, s.wait());
+                        fileCB(rel, stat, s.pend());
                     }
                 });
             });
         });
     }
     walk(basedir);
-    s.end(doneCB);
+    s.wait(doneCB);
     s.error(function(err){ throw err; });
 }
 

@@ -4,7 +4,7 @@
 
 module.exports = sync;
 
-var debug = false;
+var uid = 1, debug = false;
 
 function sync() {
     var pending = 0, gen = 0, current = {args:[], wait:0}, pend_err, catches, waits;
@@ -16,13 +16,13 @@ function sync() {
         var c = current, args = c.args, slot = args.length;
         args[slot] = null; // reserve the slot.
         c.wait++; // wait for one more argument callback.
-        if (debug) console.log("-- arg", c.wait);
+        if (debug) { if (!c.id) c.id=uid++; console.log("-- arg", c.id); }
         function sync_arg_cb(err, res) {
             if (err) {
                 handle_error(err);
             } else {
                 args[slot] = res;
-                if (!--c.wait) resume(c);
+                if (!--c.wait && c.then) resume(c);
             }
         }
         return sync_arg_cb;
@@ -34,7 +34,9 @@ function sync() {
         if (debug) console.log("-- pass");
         if (val && val._is_sync) {
             // wait for the sync instance to drain and produce a value.
-            (val.deps || (val.deps=[])).push(arg());
+            // XXX: wait() doesn't produce a value.
+            var a = arg();
+            val.wait(function(){ a(); });
         } else {
             var args = current.args, slot = args.length;
             args[slot] = val; // resolve the argument now.
@@ -48,12 +50,14 @@ function sync() {
         // function for that array element.
         var c = current, args = c.args, items = [];
         args[args.length] = items; // populate the argument immediately.
-        if (debug) console.log("-- group");
+        if (debug) { if (!c.id) c.id=uid++; console.log("-- group", c.id); }
         function sync_group_item() {
             // create a callback(error,result) function that appends its result
             // to the currently active group argument.
-            // XXX: guard against adding items after wait drops to zero
-            // (i.e. after the then-callback has been called)
+            // NB. cannot add group items after registering the then() callback,
+            // because wait might have dropped to zero and scheduled it already.
+            // XXX: loop-hole in then() with no function.
+            if (c.then) throw new Error("cannot add group items after then() callback");
             var slot = items.length;
             items[slot] = null; // reserve the slot.
             c.wait++; // wait for one more argument callback.
@@ -63,7 +67,7 @@ function sync() {
                     handle_error(err);
                 } else {
                     items[slot] = res;
-                    if (!--c.wait) resume(c);
+                    if (!--c.wait && c.then) resume(c);
                 }
             }
             return sync_item_cb;
@@ -73,20 +77,24 @@ function sync() {
 
     function then(fn) {
         // schedule a callback to run when all arguments are resolved.
-        if (debug) console.log("-- then: "+(fn && fn.name));
         var c = current;
-        c.then = fn;
+        if (debug) { if (!c.id) c.id=uid++; console.log("-- then "+c.id+" "+(fn && fn.name)); }
+        c.then = fn; // ok if null/undefined.
         // start a new argument set for the next then handler.
         current = {args:[], wait:0};
         pending++; // wait for one more then-callback.
+        // wait might already be zero if all the args were resolved before
+        // this then() call, or if none of the args required waiting.
+        // resume even if fn is null for consistent 'pending' handling.
         if (!c.wait) resume(c);
     }
 
-    function wait() {
+    function pend() {
         // create a callback(error) function that this sync instance will
-        // wait on, handling any error produced.
+        // wait on before running the next then() callback, and handling
+        // any error produced.
         pending++; // wait for one more callback.
-        if (debug) console.log("-- wait", pending);
+        if (debug) console.log("-- pend", pending);
         function sync_wait_cb(err) {
             if (err) {
                 handle_error(err);
@@ -97,20 +105,18 @@ function sync() {
         return sync_wait_cb;
     }
 
-    function end(fn) {
-        // wait for all pending contexts in this generation to finish,
-        // including any args and callbacks scheduled by then-callbacks,
-        // which will bump up the pending count.
-        if (debug) console.log("-- end: "+(fn && fn.name));
-        if (!pending) {
-            try {
-                fn();
-            } catch (err) {
-                handle_error(err);
-            }
-        } else {
-            (waits || (waits=[])).push(fn);
-        }
+    function wait(fn) {
+        // schedule fn to run after all queued then() and pend() callbacks,
+        // including any additional callbacks scheduled by those callbacks,
+        // i.e. when the queue of callbacks is empty.
+        if (debug) console.log("-- wait: "+(fn && fn.name));
+        (waits || (waits=[])).push(fn);
+        // wait for any args that might have been queued without a then()
+        // to wait for them, since we promised to wait for everything.
+        if (current.args.length) return then(); // will check pending.
+        // the last drain() might have done nothing if there were no wait
+        // functions pending when it happened, so check again.
+        if (!pending) drain();
     }
 
     function error(fn) {
@@ -119,6 +125,7 @@ function sync() {
         // XXX: decided these should cancel end() handlers that were scheduled
         // before this fn, but not those scheduled after; needs a way to indicate
         // whether the error was consumed.
+        // XXX: should flush any unused args since this is "wait, for an error".
         (catches || (catches=[])).push(fn);
         if (pend_err) {
             var err = pend_err; pend_err = null;
@@ -130,53 +137,76 @@ function sync() {
         // advance the generation so we'll ignore callbacks from any of the
         // pending args in the generation that caused the error.
         if (debug) console.log("-- handle_error", err);
+        // reset pending count and start a new generation, so we'll ignore
+        // callbacks from any arg() and pend() handlers in-flight.
+        gen++; pending = 0; current = {args:[], wait:0};
         if (catches && catches.length) {
             var handler = catches.shift();
-            gen++; pending = 0; current = {args:[], wait:0}; // start a new generation.
             try {
                 handler(err); // run the error handler.
+                // flush any unused args queued in the callback.
+                if (current.args.length) then();
             } catch (err) {
                 handle_error(err);
             }
+            // schedule the next wait() callback.
+            if (!pending && waits.length) drain();
         } else {
-            pend_err = err; // keep the error for future .error(fn) calls.
-            throw new Error("uncaught error: "+(err.stack||err.toString()));
+            // pend_err = err; // keep the error for future .error(fn) calls.
+            throw err;
         }
     }
 
-    // run the then-callback for a context when its wait count reaches zero.
+    // run the then() callback for a context and end its pending state.
     function resume(c) {
-        if (debug) console.log("-- resume", c);
-        if (c.then) {
-            // XXX: might have active args here that we need to save and
-            // restore unless we delay this callback, which we should to
-            // maintain invariant callback order anyway.
-            try {
-                c.then.apply(null, c.args);
-            } catch (err) {
-                handle_error(err);
+        if (debug) console.log("-- resolved: "+c.id);
+        process.nextTick(function(){
+            if (debug) console.log("-- run then: "+c.id);
+            // this "then" is no longer pending.
+            pending--;
+            // run the callback if one was attached.
+            if (c.then) {
+                try {
+                    // pass arg() results to the then() callback.
+                    c.then.apply(null, c.args);
+                    // flush any unused args queued in the callback.
+                    if (current.args.length) then();
+                } catch (err) {
+                    // take the error path and exit early.
+                    return handle_error(err);
+                }
             }
-            if (!--pending) drain();
-        }
+            // schedule the next wait() callback.
+            if (!pending) { if (debug) console.log("pending in "+c.id); drain(); }
+        });
     }
 
     // when sync queue is drained, run the waiting end-handlers.
     function drain() {
-        if (debug) console.log("-- drained");
-        gen++; current = {args:[], wait:0}; // start a new generation.
-        var w = waits; waits = [];
-        if (w) {
-            // XXX: decided to run these one at a time, so they can add thens
-            // before the next one runs.
-            w.forEach(function(h){
+        if (debug) { try { throw new Error; } catch (e) { console.log("-- drained", e.stack); }}
+        process.nextTick(function(){
+            if (debug) console.log("-- run wait");
+            // since we yielded, it's possible that some callback outside
+            // of our control has queued new things between the time that
+            // drain was called, and now; in that case go back to waiting.
+            // XXX: but what if a queued arg caused an error?
+            if (pending) return;
+            // run the next wait() handler if any are queued.
+            var fn = waits.shift();
+            if (fn) {
                 try {
-                    h();
+                    fn();
+                    // flush any unused args queued in the callback.
+                    if (current.args.length) then();
                 } catch (err) {
-                    handle_error(err);
+                    // take the error path and exit early.
+                    return handle_error(err);
                 }
-            });
-        }
+                // schedule the next wait() callback.
+                if (!pending && waits.length) drain();
+            }
+        });
     }
 
-    return {arg:arg, pass:pass, group:group, then:then, wait:wait, end:end, error:error, _is_sync:1};
+    return {arg:arg, pass:pass, group:group, then:then, pend:pend, wait:wait, error:error, _is_sync:1};
 }
