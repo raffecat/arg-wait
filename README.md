@@ -13,14 +13,17 @@ with then() that will be passed those arguments.
 
 Callbacks can queue up more args and callbacks.
 
-Once all queued callbacks have completed, the first end() callback will
+Once all queued callbacks have completed, the first wait() callback will
 run. This callback can queue up new work that will complete before the
-next end() callback runs.
+next wait() callback runs.
 
 If any arg() is called back with an error, the first error() callback
-will run, and all pending end() callbacks will be discarded (subject to
-change: perhaps all end() callbacks registered before that error
+will run, and all pending wait() callbacks will be discarded (subject to
+change: perhaps all wait() callbacks registered before that error
 callback will be discarded; a finally-callback would also be handy.)
+
+Use pend() to wait on a callback without capturing its result as an
+argument; errors will still be captured.
 
 Example:
 
@@ -40,7 +43,7 @@ function walkDir(basedir, fileCB, doneCB) {
                     if (stat.isDirectory()) {
                         walk(rel);
                     } else {
-                        fileCB(rel, stat, s.wait());
+                        fileCB(rel, stat, s.pend());
                     }
                 });
             });
@@ -50,4 +53,18 @@ function walkDir(basedir, fileCB, doneCB) {
     s.wait(doneCB);
     s.error(function(err){ throw err; });
 }
+```
+
+Use group() to create an array argument for the next then() callback.
+It returns a function that should be called N times to create N
+callback functions for N async operations.
+
+```
+var s = sync(), g = s.group();
+fileList.forEach(function(filename){
+    fs.readFile(filename, g());
+});
+s.then(function(files){
+    // files is an array of buffers.
+});
 ```
