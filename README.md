@@ -1,35 +1,53 @@
-arg-wait
-========
+Deal with lots of async
+-----------------------
 
-Deal with lots of async.
-------------------------
+An instance of arg-wait represents a set of async tasks running in parallel.
+The set of tasks can be extended while the tasks are running.
 
-A small utility for dealing with lots of async tasks.
+Wait handlers can be scheduled to run once the set of tasks becomes empty.
+These handlers can, in turn, add new tasks to the set that will complete
+before subsequent wait handlers run.
 
-Use arg() as the callback for an async operation.
+NB. while the happy paths are working nicely, the interaction between multiple
+wait() and error() handlers are not well-specified yet.
 
-Queue up one or more arg() or group() of args, then schedule a callback
-with then() that will be passed those arguments.
+```
+var sync = require('arg-wait');
+var s = sync(); // create an instance.
+```
 
-Callbacks can queue up more args and callbacks.
+Use ```s.arg()``` as the callback for an async operation.
 
-Once all queued callbacks have completed, the first wait() callback will
-run. This callback can queue up new work that will complete before the
-next wait() callback runs.
+Queue up one or more ```s.arg()``` or ```s.group()``` of args, then schedule
+a callback with ```then(fn)``` that will be passed those arguments in the
+order of the arg/group calls.
 
-If any arg() is called back with an error, the first error() callback
-will run, and all pending wait() callbacks will be discarded (subject to
-change: perhaps all wait() callbacks registered before that error
-callback will be discarded; a finally-callback would also be handy.)
+```
+fs.readFile("file1", s.arg());
+fs.readFile("file2", s.arg());
+s.then(function (buffer1, buffer2) {
+    // use the buffers.
+});
+```
 
-Use pend() to wait on an async operation without capturing its result
-as an argument; errors will still be handled.
+Callbacks can use ```arg()```, ```group()``` and ```then(fn)``` to extend
+the set of pending tasks.
+
+Use ```pend()``` as the callback for an async operation to include it without
+capturing its result as an argument; errors will still be handled.
+
+```
+fs.writeFile("out", buffer, s.pend());
+```
+
+If any ```arg()``` or ```pend()``` is called back with an error, the
+first ```error(fn)``` callback will run, and all pending wait() callbacks
+will be discarded (likely to change: perhaps all wait() callbacks registered
+before that error callback will be discarded; a finally-callback would also be handy.)
 
 Example:
 
 ```
-var sync = require('arg-wait');
-
 // recursively traverse a directory, enumerating all files.
 function walkDir(basedir, fileCB, doneCB) {
     var s = sync();
@@ -50,8 +68,8 @@ function walkDir(basedir, fileCB, doneCB) {
         });
     }
     walk(basedir);
-    s.wait(doneCB);
-    s.error(function(err){ throw err; });
+    s.wait(doneCB);  // does not pass any arguments.
+    s.error(doneCB); // will pass error as the first argument.
 }
 ```
 
@@ -60,7 +78,7 @@ It returns a function that should be called N times to create N
 callback functions for N async operations.
 
 ```
-var s = sync(), g = s.group();
+var g = s.group();
 fileList.forEach(function(filename){
     fs.readFile(filename, g());
 });
@@ -68,3 +86,6 @@ s.then(function(files){
     // files is an array of buffers.
 });
 ```
+
+API docs to follow.
+There is some documentation in the source comments.
