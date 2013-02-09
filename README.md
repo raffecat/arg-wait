@@ -1,5 +1,5 @@
-Deal with lots of async
------------------------
+Stop your async getting away from you
+-------------------------------------
 
 An instance of arg-wait represents a set of async tasks running in parallel.
 The set of tasks can be extended while the tasks are running.
