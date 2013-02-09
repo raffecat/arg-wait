@@ -22,8 +22,8 @@ will run, and all pending wait() callbacks will be discarded (subject to
 change: perhaps all wait() callbacks registered before that error
 callback will be discarded; a finally-callback would also be handy.)
 
-Use pend() to wait on a callback without capturing its result as an
-argument; errors will still be captured.
+Use pend() to wait on an async operation without capturing its result
+as an argument; errors will still be handled.
 
 Example:
 
