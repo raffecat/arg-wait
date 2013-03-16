@@ -6,7 +6,7 @@ The set of tasks can be extended while the tasks are running.
 
 Wait handlers can be scheduled to run once the set of tasks becomes empty.
 These handlers can, in turn, add new tasks to the set that will complete
-before subsequent wait handlers run.
+before the next wait handler runs.
 
 NB. while the happy paths are working nicely, the interaction between multiple
 wait() and error() handlers are not well-specified yet.

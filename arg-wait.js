@@ -150,7 +150,7 @@ function sync() {
                 handle_error(err);
             }
             // schedule the next wait() callback.
-            if (!pending && waits.length) drain();
+            if (!pending && waits && waits.length) drain();
         } else {
             // pend_err = err; // keep the error for future .error(fn) calls.
             throw err;
@@ -192,7 +192,7 @@ function sync() {
             // XXX: but what if a queued arg caused an error?
             if (pending) return;
             // run the next wait() handler if any are queued.
-            var fn = waits.shift();
+            var fn = waits && waits.shift();
             if (fn) {
                 try {
                     fn();
